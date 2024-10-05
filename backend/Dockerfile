@@ -7,6 +7,9 @@ WORKDIR /app
 # Copy the current directory contents into the container at /app
 COPY . /app
 
+# Copy Firebase credentials
+COPY firebase_credentials.json /app/credentials/firebase_credentials.json
+
 # Install the required packages
 RUN pip install --no-cache-dir -r requirements.txt
 

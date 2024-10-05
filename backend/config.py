@@ -1,5 +1,7 @@
 import os
 from dotenv import main
+import firebase_admin
+from firebase_admin import credentials, db
 
 main.load_dotenv()
 
@@ -8,5 +10,9 @@ class Config:
         'title': 'Flask API',
         'uiversion': 3
     }
-    MONGO_URI = os.getenv('MONGO_URI')
-    MONGO_DB_NAME = os.getenv('MONGO_DB_NAME')
+    
+    # Initialize Firebase Admin SDK
+    cred = credentials.Certificate(os.getenv('FIREBASE_CREDENTIALS_PATH'))
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': os.getenv('FIREBASE_DATABASE_URL')
+    })
