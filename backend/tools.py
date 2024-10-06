@@ -1,5 +1,19 @@
 import json
-import bson.json_util as json_util
+from datetime import timezone 
+import datetime 
+import requests
+import os
 
-def json_fy(obj):
-  return json.loads(json_util.dumps(obj))
+def utc_timestamp():
+  dt = datetime.datetime.now(timezone.utc) 
+  
+  utc_time = dt.replace(tzinfo=timezone.utc) 
+  return utc_time.timestamp() 
+
+def sign_in(custom_token):
+  _verify_token_url = 'https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyCustomToken'
+  body = {'token' : custom_token.decode(), 'returnSecureToken' : True}
+  params = {'key' : os.getenv('FIREBASE_API_KEY')}
+  resp = requests.request('post', _verify_token_url, params=params, json=body)
+  resp.raise_for_status()
+  return resp.json().get('idToken')

@@ -7,6 +7,8 @@ import tools
 from firebase_admin import auth, db
 import firebase_admin
 from functools import wraps
+import datetime
+import iss_tools
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -42,13 +44,14 @@ def authenticate_user(func):
             # Verify the Firebase token
             decoded_token = auth.verify_id_token(token)
             request.user = decoded_token  # Store user info for later use
-            
+              
+            uid = decoded_token["uid"]
             # Check if user has a role in Firebase Realtime Database
-            ref = db.reference(f'roles/{decoded_token["uid"]}')
-            user_role = ref.get()
+            roles_ref = db.reference(f'roles/{uid}')
+            user_role = roles_ref.get()
             if not user_role:
                 # If the user has no role, assign them the default 'earthling' role
-                ref.set({"role": "earthling"})
+                roles_ref.set({"role": "earthling"})
                 request.user_role = "earthling"
             else:
                 request.user_role = user_role.get("role", "earthling")
@@ -75,108 +78,110 @@ def admin_required(func):
             return jsonify({"message": "Admin access required"}), 403
     wrapper.__name__ = func.__name__
     return wrapper
-
-@app.route('/api/data', methods=['GET'])
+  
+@app.route('/api/waive/<string:location>', methods=['GET'])
 @authenticate_user
-def get_data():
-    """
-    Get data from Firebase Realtime Database
-    ---
-    responses:
-      200:
-        description: A successful response
-    """
-    ref = db.reference('data')
-    data = ref.get()
-    return jsonify(data), 200
-
-@app.route('/api/data', methods=['POST'])
-@admin_required
-def add_data():
-    """
-    Add data to Firebase Realtime Database (Admin Only)
+def get_waives(location = ""):
+  """
+    Post location info with geolocation (latitude and longitude)
     ---
     parameters:
-      - name: body
-        in: body
-        required: true
+      - name: location
+        in: path
+        required: false
         schema:
-          id: Data
+          id: Geolocation
           properties:
-            key:
-              type: string
-            value:
-              type: string
+            latitude:
+              type: number
+              description: Latitude of the location
+              required: true
+            longitude:
+              type: number
+              description: Longitude of the location
+              required: true
     responses:
       200:
-        description: Data added successfully
+        description: List of waive objects
     """
-    data = request.json
-    ref = db.reference('data')
-    ref.push(data)  # Push the data to the 'data' node
-    return jsonify({"message": "Data added successfully"}), 200
-
-@app.route('/api/users', methods=['GET'])
-# @admin_required
-def get_all_users():
-    """
-    Get all users from Firebase Authentication (Admin Only)
-    ---
-    responses:
-      200:
-        description: List of users
-    """
-    users = []
-    page = auth.list_users()
-    while page:
-        for user in page.users:
-            # Fetch role from Realtime Database
-            ref = db.reference(f'roles/{user.uid}')
-            user_role = ref.get()
-            role = user_role.get("role", "user") if user_role else "user"
-            users.append({
-                "uid": user.uid,
-                "email": user.email,
-                "display_name": user.display_name,
-                "role": role
-            })
-        page = page.get_next_page()
-
-    return jsonify(users), 200
-
-@app.route('/api/users/role', methods=['POST'])
-# @admin_required
-def change_user_role():
-    """
-    Change user role in Firebase Realtime Database (Admin Only)
-    ---
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          id: RoleChange
-          properties:
-            uid:
-              type: string
-            role:
-              type: string
-    responses:
-      200:
-        description: Role changed successfully
-    """
-    data = request.json
-    user_uid = data.get('uid')
-    new_role = data.get('role')
-
-    if not user_uid or not new_role:
-        return jsonify({"message": "Invalid data"}), 400
-
-    # Update the user's role in Realtime Database
-    ref = db.reference(f'roles/{user_uid}')
-    ref.set({"uid": user_uid, "role": new_role})
     
-    return jsonify({"message": f"Role changed to {new_role} for user {user_uid}"}), 200
+  latitude = None
+  longitude = None
+  
+  if location and location != "undefined":
+    loc = json.loads(location)
+    latitude = loc["latitude"]
+    longitude = loc["longitude"]
+    
+  ref = db.reference('waives')
+  waives = ref.get()
+  
+  resp = [{**{"id": id}, **waives[id]} for id in waives]
+  
+  return jsonify(resp), 200
+  
+
+@app.route('/api/waive/', methods=['POST'])
+@authenticate_user
+def send_waive():
+    """
+    Post location info with geolocation (latitude and longitude)
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          id: Geolocation
+          properties:
+            latitude:
+              type: number
+              description: Latitude of the location
+              required: true
+            longitude:
+              type: number
+              description: Longitude of the location
+              required: true
+    responses:
+      200:
+        description: A successful response with location info
+      400:
+        description: Missing or invalid parameters
+    """
+    
+    data = request.get_json()
+
+    # Get latitude and longitude from JSON body
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+
+    if latitude is None or longitude is None:
+        return jsonify({"message": "Latitude and longitude are required"}), 400
+
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+        default_photo = "https://firebasestorage.googleapis.com/v0/b/nasa-space-apps-challeng-b676a.appspot.com/o/usr.png?alt=media&token=c87c8c80-6b01-40c4-b7b3-6862a677ad32"
+        # Example response: You can customize this to return data based on geolocation
+        location_data = {
+            # "id": ,
+            "user": {
+              "uid": request.user["uid"],
+              "name": request.user["display_name"] if "display_name" in request.user else "Some earthling",
+              "photo": request.user["photoURL"] if "photoURL" in request.user else default_photo
+            },
+            "latitude": latitude,
+            "longitude": longitude,
+            "utc_timestamp": tools.utc_timestamp()
+        }
+        
+        ref = db.reference('waives')
+        ref.push(location_data)
+  
+        return "", 200
+
+    except Exception as e:
+        return jsonify({"message": "Invalid latitude or longitude values"}), 400
   
 @app.route("/api/token/<string:user_id>", methods=["GET"])
 def generate_token(user_id):
@@ -193,9 +198,82 @@ def generate_token(user_id):
     200:
       description: List of users
   """
-  user = auth.get_user(user_id)
+  # user = auth.get_user(user_id)
+  token = auth.create_custom_token(user_id)
   
-  return user.getIdToken(), 200
+  id_token = tools.sign_in(token)
+  
+  return id_token, 200
+
+@app.route('/api/trajectory', methods=['GET'])
+@authenticate_user
+def get_trajectory():
+    """
+    Create ISS movement prediction
+    ---
+    parameters:
+      - name: start_time
+        in: query
+        type: number
+        required: false
+        description: Range start time in UTC, POSIX time
+      - name: end_time
+        in: query
+        type: number
+        required: false
+        description: Range end time in UTC, POSIX time
+      - name: step
+        in: query
+        type: number
+        required: false
+        description: Step duration in seconds
+    responses:
+      200:
+        description: Successful trajectory prediction
+        schema:
+          type: object
+          properties:
+            trajectory:
+              type: array
+              items:
+                type: object
+                properties:
+                  time:
+                    type: number
+                    description: Time in POSIX format
+                  position:
+                    type: object
+                    properties:
+                      lat:
+                        type: number
+                        description: Latitude of the ISS
+                      lon:
+                        type: number
+                        description: Longitude of the ISS
+    """
+    try:
+        # Get start_time from query, default to current UTC time
+        start_time = request.args.get('start_time')
+        start_time = datetime.datetime.fromtimestamp(float(start_time)) if start_time else datetime.datetime.now(datetime.timezone.utc)
+
+        # Get end_time from query, default to 90 minutes after start_time
+        end_time = request.args.get('end_time')
+        end_time = datetime.datetime.fromtimestamp(float(end_time)) if end_time else start_time + datetime.timedelta(minutes=90)
+
+        # Get step from query, default to 60 seconds
+        step = request.args.get('step')
+        step = datetime.timedelta(seconds=int(step)) if step else datetime.timedelta(seconds=60)
+
+        # Generate trajectory using iss_tools
+        trajectory_data = iss_tools.getTrajectory(start_time, end_time, step)
+        return jsonify({
+            "timestamp_posix": start_time.timestamp(),
+            "step_seconds": step.seconds,
+            "locations": [[l[0],l[1]] for l in trajectory_data]
+        }), 200
+
+    except Exception as e:
+        return jsonify({"message": str(e)}), 400
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

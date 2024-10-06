@@ -1,0 +1,6 @@
+# firebase_credentials.json
+.env
+*.env
+__pycache__/
+pyenv/
+*.vscode/
