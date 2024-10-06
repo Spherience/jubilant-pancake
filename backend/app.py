@@ -5,10 +5,9 @@ from config import Config
 import json
 import tools
 from firebase_admin import auth, db
-import firebase_admin
-from functools import wraps
 import datetime
 import iss_tools
+import roles
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -31,56 +30,9 @@ swagger_config = {
 }
 
 swagger = Swagger(app, template=swagger_config)
-
-# Middleware to check authentication
-def authenticate_user(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
-            return jsonify({"message": "Token missing"}), 403
-
-        try:
-            # Verify the Firebase token
-            decoded_token = auth.verify_id_token(token)
-            request.user = decoded_token  # Store user info for later use
-              
-            uid = decoded_token["uid"]
-            # Check if user has a role in Firebase Realtime Database
-            roles_ref = db.reference(f'roles/{uid}')
-            user_role = roles_ref.get()
-            if not user_role:
-                # If the user has no role, assign them the default 'earthling' role
-                roles_ref.set({"role": "earthling"})
-                request.user_role = "earthling"
-            else:
-                request.user_role = user_role.get("role", "earthling")
-            
-        except Exception as e:
-            return jsonify({"message": "Invalid token"}), 403
-
-        return func(*args, **kwargs)
-    wrapper.__name__ = func.__name__
-    return wrapper
-  
-# Middleware to check for admin role
-def admin_required(func):
-    @authenticate_user
-    def wrapper(*args, **kwargs):
-        user = request.user
-
-        ref = db.reference(f'roles/{user["uid"]}')
-        user_role = ref.get()
-
-        if user_role and user_role.get('role') == 'admin':
-            return func(*args, **kwargs)
-        else:
-            return jsonify({"message": "Admin access required"}), 403
-    wrapper.__name__ = func.__name__
-    return wrapper
   
 @app.route('/api/waive/<string:location>', methods=['GET'])
-@authenticate_user
+@roles.authenticate_user
 def get_waives(location = ""):
   """
     Post location info with geolocation (latitude and longitude)
@@ -115,14 +67,22 @@ def get_waives(location = ""):
     
   ref = db.reference('waives')
   waives = ref.get()
+  waives = waives if waives else []
   
-  resp = [{**{"id": id}, **waives[id]} for id in waives]
+  ref = db.reference('high_fives')
+  high_fives = ref.get()
+  high_fives = high_fives if high_fives else []
+  
+  resp = {
+    "waives": [{**{"id": id}, **waives[id]} for id in waives],
+    "high_fives": [{**{"id": id}, **high_fives[id]} for id in high_fives]
+  }
   
   return jsonify(resp), 200
   
 
 @app.route('/api/waive/', methods=['POST'])
-@authenticate_user
+@roles.authenticate_user
 def send_waive():
     """
     Post location info with geolocation (latitude and longitude)
@@ -206,7 +166,7 @@ def generate_token(user_id):
   return id_token, 200
 
 @app.route('/api/trajectory', methods=['GET'])
-@authenticate_user
+@roles.authenticate_user
 def get_trajectory():
     """
     Create ISS movement prediction
@@ -274,6 +234,188 @@ def get_trajectory():
 
     except Exception as e:
         return jsonify({"message": str(e)}), 400
+
+@app.route('/api/next_pass_over/', methods=['POST'])
+@roles.authenticate_user
+def next_pass_over():
+    """
+    Find next passover closest location and time
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          id: Geolocation
+          properties:
+            latitude:
+              type: number
+              description: Latitude of the location
+            longitude:
+              type: number
+              description: Longitude of the location
+        required:
+          - latitude
+          - longitude
+    responses:
+      200:
+        description: Successful response with next passover time and location
+        schema:
+          type: object
+          properties:
+            timestamp:
+              type: number
+              description: Timestamp of the next ISS passover (POSIX time)
+            latitude:
+              type: number
+              description: Latitude of the ISS at the passover time
+            longitude:
+              type: number
+              description: Longitude of the ISS at the passover time
+      400:
+        description: Missing or invalid parameters
+    """
+    data = request.get_json()
+
+    # Get latitude and longitude from JSON body
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+
+    if latitude is None or longitude is None:
+        return jsonify({"message": "Latitude and longitude are required"}), 400
+
+    try:
+        # Convert latitude and longitude to float
+        latitude = float(latitude)
+        longitude = float(longitude)
+
+        # Call to iss_tools to find the next passover
+        next_pass = iss_tools.nextPassOver(latitude, longitude, datetime.datetime.now(datetime.timezone.utc))
+        pass_time = next_pass.midpoint
+
+        # Get ISS location at that passover time
+        location = iss_tools.getIssLocation(pass_time)
+
+        return jsonify({
+            "timestamp": pass_time.timestamp(),  # Convert datetime to POSIX timestamp
+            "latitude": location[0],             # Latitude of the ISS
+            "longitude": location[1]             # Longitude of the ISS
+        }), 200
+
+    except ValueError:
+        # If the latitude or longitude cannot be converted to a float
+        return jsonify({"message": "Latitude and longitude must be valid numbers"}), 400
+    except Exception as e:
+        # Handle other unforeseen errors
+        return jsonify({"message": f"An error occurred: {str(e)}"}), 500
+      
+@app.route('/api/high_five/<string:waive_id>', methods=['POST'])
+@roles.astronaut_required
+def send_high_five(waive_id):
+    """
+    Send a high five to a specific waive
+    ---
+    parameters:
+      - name: waive_id
+        in: path
+        required: true
+        type: string
+        description: The ID of the waive receiving the high five
+    responses:
+      200:
+        description: High five successfully sent
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                waive:
+                  type: object
+                  description: Details of the waive receiving the high five
+                astronaut:
+                  type: object
+                  description: Details of the astronaut sending the high five
+                  properties:
+                    id:
+                      type: string
+                      description: ID of the astronaut
+                    name:
+                      type: string
+                      description: Name of the astronaut
+                iss_latitude:
+                  type: number
+                  description: Latitude of the ISS at the time of the high five
+                iss_longitude:
+                  type: number
+                  description: Longitude of the ISS at the time of the high five
+                utc_timestamp:
+                  type: number
+                  description: UTC timestamp of the high five in POSIX time
+      400:
+        description: Waive not found or invalid input
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  description: Error message indicating the waive was not found
+    """
+    
+    ref = db.reference(f'waives/{waive_id}')
+    waive = ref.get()
+    
+    if not waive:
+        return jsonify({"message": "Waive not existing"}), 400
+
+    ref = db.reference('high_fives')
+    latitude, longitude = iss_tools.getIssLocation(datetime.datetime.now(datetime.timezone.utc))
+    
+    hf = {
+        "waive": waive,
+        "astronaut": tools.create_user_from_req(request),
+        "iss_latitude": latitude,
+        "iss_longitude": longitude,
+        "utc_timestamp": tools.utc_timestamp()
+    }
+    
+    ref.push(hf)
+    
+    return jsonify(hf), 200
+  
+@app.route('/api/user_role', methods=['GET'])
+@roles.authenticate_user
+def get_user_role():
+    """
+    Get the authenticated user's role
+    ---
+    responses:
+      200:
+        description: Returns the authenticated user and their role
+        schema:
+          type: object
+          properties:
+            uid:
+              type: string
+              description: The authenticated user's UID
+            email:
+              type: string
+              description: The authenticated user's email
+            role:
+              type: string
+              description: The authenticated user's role
+      403:
+        description: Invalid or missing token
+    """
+    user = request.user  # Extract the user info from request
+    role = request.user_role  # Extract the user's role from request
+    
+    return jsonify({
+        "uid": user.get("uid"),
+        "email": user.get("email"),
+        "role": role
+    }), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

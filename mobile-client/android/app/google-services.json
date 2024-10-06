@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "858141317035",
+    "project_id": "nasa-space-apps-challeng-b676a",
+    "storage_bucket": "nasa-space-apps-challeng-b676a.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:858141317035:android:adb41210838f3b15e824ee",
+        "android_client_info": {
+          "package_name": "com.thegreatnothing.spacewave"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "858141317035-02a6beg2a5v9j2hngrjhe3a2ml2u49co.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhBvarfJNjw0Qt6OdVHsL3xyOUDy7naFo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "858141317035-02a6beg2a5v9j2hngrjhe3a2ml2u49co.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "858141317035-cdq74th8f5juo8h4nddt2pp2ta77rq05.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.googleMapsInFlutter"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
